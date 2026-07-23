@@ -1,0 +1,138 @@
+:root {
+  --ai: #165e83;
+  --ink: #1b1b1b;
+  --line: #d9d9d9;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", system-ui, sans-serif;
+  color: var(--ink);
+}
+
+#map { position: absolute; inset: 0; z-index: 1; }
+#pano { position: absolute; inset: 0; z-index: 0; visibility: hidden; }
+
+/* 次のパノラマを裏で読み込んでキャッシュを温めるための不可視ビューア */
+#prefetch { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+body:not(.walk) #prefetch { visibility: hidden; }
+
+body.walk #pano { visibility: visible; z-index: 2; }
+body.walk #map {
+  top: auto; left: auto;
+  right: 12px; bottom: 12px;
+  width: 230px; height: 160px;
+  z-index: 3;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+#bar {
+  position: absolute;
+  top: 12px; left: 12px;
+  z-index: 5;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 12px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#bar h1 {
+  font-size: 15px;
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: .1em;
+}
+
+#status { font-size: 12px; line-height: 1.6; color: #444; }
+
+#addr {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+#addr:focus { outline: none; border-color: var(--ai); }
+
+.row { display: flex; gap: 6px; align-items: center; }
+.row label { font-size: 12px; }
+
+select, button {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 4px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+button.primary { background: var(--ai); border-color: var(--ai); color: #fff; }
+
+#walkBtn {
+  position: absolute;
+  left: 50%; bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 5;
+  font-size: 14px;
+  padding: 10px 22px;
+}
+
+#controls {
+  position: absolute;
+  left: 50%; bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 12px;
+}
+
+#seek { width: 240px; accent-color: var(--ai); }
+
+#keyModal {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: rgba(0, 0, 0, .35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 18px;
+  width: min(420px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card h2 { font-size: 14px; margin: 0; }
+.card p { font-size: 12px; margin: 0; line-height: 1.7; color: #444; }
+.card input {
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+[hidden] { display: none !important; }

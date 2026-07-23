@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ぐるり — 周辺自動さんぽ</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="prefetch"></div>
+<div id="pano"></div>
+<div id="map"></div>
+
+<div id="bar">
+  <h1>ぐるり</h1>
+  <span id="status">住所を検索するか地図をクリックすると、その周辺をひと回りするルートを作ります</span>
+  <input id="addr" type="search" placeholder="住所・駅名・場所名で検索" autocomplete="off">
+  <div class="row">
+    <label for="radius">半径</label>
+    <select id="radius">
+      <option value="150">150m</option>
+      <option value="200" selected>200m</option>
+      <option value="300">300m</option>
+      <option value="500">500m</option>
+    </select>
+    <button id="keyBtn">APIキー</button>
+  </div>
+</div>
+
+<button id="walkBtn" class="primary" hidden>ぐるり歩く</button>
+
+<div id="controls" hidden>
+  <button id="playBtn" class="primary">⏸</button>
+  <input id="seek" type="range" min="0" max="0" value="0">
+  <select id="speed">
+    <option value="1600">ゆっくり</option>
+    <option value="800" selected>ふつう</option>
+    <option value="350">はやい</option>
+  </select>
+  <button id="exitBtn">地図へ</button>
+</div>
+
+<div id="keyModal" hidden>
+  <div class="card">
+    <h2>Google Maps APIキー</h2>
+    <p>ストリートビューの再生には Google Maps JavaScript API のキーが必要です。キーはこの端末の localStorage にだけ保存され、外部には送られません。取得手順は README.md にあります。</p>
+    <input id="keyInput" placeholder="AIza..." autocomplete="off">
+    <div class="row">
+      <button id="keySave" class="primary">保存</button>
+      <button id="keyCancel">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
