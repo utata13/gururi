@@ -10,6 +10,7 @@
 <body>
 <div id="prefetch"></div>
 <div id="pano"></div>
+<div id="nightVeil"></div>
 <div id="map"></div>
 
 <div id="bar">
@@ -25,6 +26,7 @@
       <option value="500">500m</option>
     </select>
     <button id="keyBtn">APIキー</button>
+    <button id="nightBtn" title="コンビニ・大通り・駅の事実データから、夜の明るさを区間ごとに推定して色分け">夜の明るさ</button>
   </div>
 </div>
 
@@ -37,6 +39,11 @@
     <option value="1600">ゆっくり</option>
     <option value="800" selected>ふつう</option>
     <option value="350">はやい</option>
+  </select>
+  <select id="gazeMode" title="歩くときの視線の動き">
+    <option value="off" selected>まっすぐ</option>
+    <option value="nagara">ながら見</option>
+    <option value="kyoro">キョロキョロ</option>
   </select>
   <button id="exitBtn">地図へ</button>
 </div>
@@ -54,6 +61,7 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

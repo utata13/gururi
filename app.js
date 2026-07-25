@@ -9,6 +9,10 @@ const state = {
   clickMarker: null,
   posMarker: null,
   route: [],   // 密度化した経路点 [{lat,lng}]
+  segs: [],    // ルート区間 [{a,b,cls,lit,level}](夜の明るさ推定つき)
+  pois: [],    // 周辺のコンビニ・駅 [{lat,lng,type}]
+  night: false,
+  nightLayer: null,
   panos: [],   // [{id, lat, lng, heading}]
   idx: 0,
   playing: false,
@@ -41,6 +45,19 @@ function init() {
   $('exitBtn').onclick = exitWalk;
   $('seek').oninput = (e) => jumpTo(+e.target.value);
   $('keyBtn').onclick = () => showKeyModal(true);
+  $('nightBtn').onclick = () => {
+    state.night = !state.night;
+    $('nightBtn').classList.toggle('primary', state.night);
+    drawRoute();
+    applyNightFx(state.panos[state.idx]?.level);
+    if (state.night) {
+      const c = state.lampCity;
+      const basis = c ? `${c.name}の街灯${c.n.toLocaleString()}灯の実データ` : '推定';
+      setStatus(document.body.classList.contains('walk')
+        ? `夜シミュレーション中(${basis})。暗そうな区間ほど画面が暗くなります`
+        : `夜の明るさ(${basis}): 黄=明るそう・灰青=ふつう・紺=暗そう。歩くと画面の暗さも連動します`);
+    }
+  };
   $('keySave').onclick = saveKey;
   $('keyCancel').onclick = () => showKeyModal(false);
 
@@ -123,27 +140,64 @@ async function makeRoute(ll) {
     return;
   }
 
+  // 夜の明るさ推定の材料: 周辺のコンビニ・駅
+  state.pois = elements
+    .filter((el) => el.type === 'node' && el.tags)
+    .map((el) => ({
+      lat: el.lat, lng: el.lon,
+      type: el.tags.shop === 'convenience' ? 'conbini' : 'station',
+    }));
+
+  // 街灯データを公開している自治体なら実データ、それ以外は推定にフォールバック
+  state.lampCity = null;
+  const city = lampCityFor(ll);
+  if (city) {
+    try {
+      setStatus(`${city.name}の街灯オープンデータを読み込み中…`);
+      await loadLamps(city);
+      state.lampCity = city;
+    } catch (e) { /* 取得できなければ推定のまま */ }
+  }
+
+  // ルートを区間に分け、区間ごとに夜の明るさを判定
+  state.segs = [];
+  for (let i = 1; i < loop.length; i++) {
+    const a = g.pos.get(loop[i - 1]);
+    const b = g.pos.get(loop[i]);
+    const e = (g.adj.get(loop[i - 1]) || []).find((x) => x.to === loop[i]);
+    const seg = { a, b, cls: e?.cls, lit: e?.lit };
+    seg.level = state.lampCity ? nightLevelReal(seg, state.lampCity) : nightLevel(seg);
+    state.segs.push(seg);
+  }
+
   const pts = loop.map((id) => g.pos.get(id));
   state.route = densify(pts, 13);
-  state.routeLine = L.polyline(pts, { color: AI, weight: 4, opacity: 0.9 }).addTo(state.map);
-  state.map.fitBounds(state.routeLine.getBounds(), { padding: [40, 40] });
+  drawRoute();
+  state.map.fitBounds(L.latLngBounds(pts), { padding: [40, 40] });
 
   const dist = Math.round(pathLength(pts));
+  const lampNote = state.lampCity ? `(${state.lampCity.name}は街灯の実データ対応)` : '';
   if (dist < R * 1.5) {
-    setStatus(`約${dist}mと短めのルートです。場所を少しずらすか、半径を上げると良いかも`);
+    setStatus(`約${dist}mと短めのルートです。場所を少しずらすか、半径を上げると良いかも${lampNote}`);
   } else {
-    setStatus(`約${dist}mの一周ルートができました`);
+    setStatus(`約${dist}mの一周ルートができました${lampNote}`);
   }
   $('walkBtn').hidden = false;
 }
 
 async function fetchRoads(ll, r) {
   const types = 'trunk|primary|secondary|tertiary|unclassified|residential|living_street|pedestrian';
-  const q = `[out:json][timeout:20];way(around:${r},${ll.lat},${ll.lng})[highway~"^(${types})$"][area!=yes];out geom;`;
+  // 道路に加えて、夜の明るさ推定の材料(コンビニ・駅)も1リクエストでまとめて取る
+  const q = `[out:json][timeout:20];(` +
+    `way(around:${r},${ll.lat},${ll.lng})[highway~"^(${types})$"][area!=yes];` +
+    `node(around:${r + 150},${ll.lat},${ll.lng})[shop=convenience];` +
+    `node(around:${r + 300},${ll.lat},${ll.lng})[railway=station];` +
+    `);out geom;`;
   const endpoints = [
     'https://overpass-api.de/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter',
     'https://overpass.private.coffee/api/interpreter',
+    'https://overpass.openstreetmap.fr/api/interpreter',
   ];
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) {
@@ -169,12 +223,14 @@ async function fetchRoads(ll, r) {
 function buildGraph(elements) {
   const pos = new Map();
   const adj = new Map();
-  const addEdge = (a, b, w) => {
+  const addEdge = (a, b, w, cls, lit) => {
     if (!adj.has(a)) adj.set(a, []);
-    adj.get(a).push({ to: b, w });
+    adj.get(a).push({ to: b, w, cls, lit });
   };
   for (const el of elements) {
     if (el.type !== 'way' || !el.geometry || !el.nodes) continue;
+    const cls = el.tags?.highway;
+    const lit = el.tags?.lit;
     for (let i = 0; i < el.nodes.length; i++) {
       const gpt = el.geometry[i];
       if (gpt) pos.set(el.nodes[i], { lat: gpt.lat, lng: gpt.lon });
@@ -184,8 +240,8 @@ function buildGraph(elements) {
       const pa = pos.get(a), pb = pos.get(b);
       if (!pa || !pb) continue;
       const w = hav(pa, pb);
-      addEdge(a, b, w);
-      addEdge(b, a, w);
+      addEdge(a, b, w, cls, lit);
+      addEdge(b, a, w, cls, lit);
     }
   }
   return { pos, adj };
@@ -228,6 +284,152 @@ function makeLoop(g, ll, R) {
 }
 
 function edgeKey(a, b) { return a < b ? `${a}_${b}` : `${b}_${a}`; }
+
+// ---------- 夜の明るさ推定 ----------
+
+function segMid(seg) {
+  return { lat: (seg.a.lat + seg.b.lat) / 2, lng: (seg.a.lng + seg.b.lng) / 2 };
+}
+
+// 夜も灯りと人がある場所(コンビニ・駅)の近さによる加点
+function poiBonus(mid) {
+  let dC = Infinity, dS = Infinity;
+  for (const p of state.pois) {
+    const d = hav(mid, p);
+    if (p.type === 'conbini') dC = Math.min(dC, d);
+    else dS = Math.min(dS, d);
+  }
+  let s = 0;
+  if (dC < 60) s += 3; else if (dC < 120) s += 2; else if (dC < 180) s += 1;
+  if (dS < 150) s += 2; else if (dS < 300) s += 1;
+  return s;
+}
+
+const toLevel = (s) => (s >= 4 ? 'bright' : s >= 2 ? 'mid' : 'dark');
+
+// 推定版(街灯データが無い地域用)。根拠: 幹線道路は街灯整備がほぼ確実 / litタグ / コンビニ・駅。
+// 夜の映像は存在しないので、映像を加工せずデータで答える方針([[NOTES-local.md]]参照)
+function nightLevel(seg) {
+  const mid = segMid(seg);
+  let s = { trunk: 4, primary: 4, secondary: 3, tertiary: 2, pedestrian: 1.5 }[seg.cls] ?? 1;
+  if (seg.lit === 'yes') s += 2;
+  else if (seg.lit === 'no') s -= 2;
+  return toLevel(s + poiBonus(mid));
+}
+
+// 実データ版(街灯を公開している自治体)。中点30m以内の実際の街灯本数で判定する。
+// 注意: 幹線道路の照明は都道府県・国の管理で市の台帳に載らない(町田市データでは
+// primary の58%が街灯0本だった)。そのため幹線は0本でも「暗い」と断定しない。
+function nightLevelReal(seg, city) {
+  const mid = segMid(seg);
+  const n = lampsNear(city, mid, 30);
+  seg.lamps = n;
+  let s = n >= 4 ? 5 : n >= 2 ? 4 : n === 1 ? 2.5 : 0.5;
+  if (['trunk', 'primary', 'secondary'].includes(seg.cls)) s = Math.max(s, 2.5);
+  if (seg.lit === 'yes') s = Math.max(s, 4);
+  else if (seg.lit === 'no') s = Math.min(s, 1);
+  return toLevel(s + poiBonus(mid));
+}
+
+// ---------- 街灯オープンデータ(対応自治体のみ) ----------
+// 位置つきの街灯データを公開している自治体はごく少ない(東京都カタログの「街路灯」30件中、
+// 実際の位置データは町田市のみ。他は設置数の統計)。対応都市は実データ、他は推定に自動で切替。
+const LAMP_CITIES = [
+  {
+    name: '町田市',
+    file: 'lamps/machida.json',
+    bbox: [35.4962, 139.2760, 35.6264, 139.5105], // [南, 西, 北, 東]
+    source: '町田市オープンデータ「街路灯」CC BY 4.0',
+  },
+];
+
+const LAMP_CELL = 2000; // 約50m格子
+
+function lampCityFor(ll) {
+  return LAMP_CITIES.find((c) =>
+    ll.lat >= c.bbox[0] && ll.lat <= c.bbox[2] && ll.lng >= c.bbox[1] && ll.lng <= c.bbox[3]);
+}
+
+async function loadLamps(city) {
+  if (city.grid) return city;
+  const res = await fetch(city.file, { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error('lamp data ' + res.status);
+  const d = await res.json();
+  const dlat = d.dlat.split(',');
+  const dlng = d.dlng.split(',');
+  const grid = new Map();
+  let la = d.lat0;
+  for (let i = 0; i < dlat.length; i++) {
+    la += +dlat[i];
+    const p = { lat: la / 1e5, lng: (d.lng0 + +dlng[i]) / 1e5 };
+    const k = Math.floor(p.lat * LAMP_CELL) + ':' + Math.floor(p.lng * LAMP_CELL);
+    const arr = grid.get(k);
+    if (arr) arr.push(p); else grid.set(k, [p]);
+  }
+  city.grid = grid;
+  city.n = d.n;
+  return city;
+}
+
+function lampsNear(city, p, radius) {
+  const r = Math.floor(p.lat * LAMP_CELL), c = Math.floor(p.lng * LAMP_CELL);
+  let n = 0;
+  for (let i = -1; i <= 1; i++) {
+    for (let j = -1; j <= 1; j++) {
+      const arr = city.grid.get((r + i) + ':' + (c + j));
+      if (!arr) continue;
+      for (const q of arr) if (hav(p, q) <= radius) n++;
+    }
+  }
+  return n;
+}
+
+const NIGHT_COLORS = { bright: '#e6a817', mid: '#8fa3b8', dark: '#243b6b' };
+
+// 夜シミュレーション: 歩行中、区間の推定に連動して画面の暗さを変える(本物の夜景ではない)
+const NIGHT_FX = {
+  bright: { filter: 'brightness(0.85) saturate(0.9)', veil: 0.12 },
+  mid:    { filter: 'brightness(0.6) saturate(0.75)', veil: 0.28 },
+  dark:   { filter: 'brightness(0.35) saturate(0.55)', veil: 0.45 },
+};
+
+function applyNightFx(level) {
+  const fx = state.night && level ? NIGHT_FX[level] : null;
+  $('pano').style.filter = fx ? fx.filter : '';
+  $('nightVeil').style.opacity = fx ? fx.veil : 0;
+}
+
+// パノラマ地点に一番近いルート区間の明るさ推定を引く
+function nearestSegLevel(p) {
+  let best = 'mid', bd = Infinity;
+  for (const s of state.segs) {
+    const m = { lat: (s.a.lat + s.b.lat) / 2, lng: (s.a.lng + s.b.lng) / 2 };
+    const d = hav(p, m);
+    if (d < bd) { bd = d; best = s.level; }
+  }
+  return best;
+}
+
+// ルート描画。通常は藍の一本線、夜の明るさONなら区間色分け+コンビニの黄点
+function drawRoute() {
+  if (state.routeLine) { state.routeLine.remove(); state.routeLine = null; }
+  if (state.nightLayer) { state.nightLayer.remove(); state.nightLayer = null; }
+  if (!state.segs.length) return;
+  if (state.night) {
+    const grp = L.layerGroup();
+    for (const seg of state.segs) {
+      L.polyline([seg.a, seg.b], { color: NIGHT_COLORS[seg.level], weight: 5, opacity: 0.95 }).addTo(grp);
+    }
+    for (const p of state.pois) {
+      if (p.type !== 'conbini') continue;
+      L.circleMarker(p, { radius: 4, color: '#fff', weight: 1, fillColor: NIGHT_COLORS.bright, fillOpacity: 1 }).addTo(grp);
+    }
+    state.nightLayer = grp.addTo(state.map);
+  } else {
+    const pts = state.segs.map((s) => s.a).concat([state.segs[state.segs.length - 1].b]);
+    state.routeLine = L.polyline(pts, { color: AI, weight: 4, opacity: 0.9 }).addTo(state.map);
+  }
+}
 
 function nearestNode(g, ll, filterSet) {
   let best = null, bestD = Infinity;
@@ -326,8 +528,14 @@ function pathLength(pts) {
 
 // ---------- ストリートビュー再生 ----------
 
+// 保存済みの鍵 → config.js の同梱鍵 の順に使う(config.js が無くても手入力で動く)
+function getKey() {
+  return localStorage.getItem('gururi_key') || window.GURURI_KEY || '';
+}
+
 async function startWalk() {
-  const key = localStorage.getItem('gururi_key');
+  if (!state.route.length) return; // ルート生成前に呼ばれた場合の保険
+  const key = getKey();
   if (!key) { showKeyModal(true); return; }
   setStatus('Google Maps を読み込み中…');
   try {
@@ -385,6 +593,7 @@ async function preparePanos() {
     out[i].heading = i < out.length - 1
       ? bearing(out[i], out[i + 1])
       : (out[i - 1]?.heading ?? 0);
+    out[i].level = nearestSegLevel(out[i]);
   }
   state.panos = out;
 }
@@ -429,12 +638,15 @@ function enterWalkMode() {
   }
   if (!state.posMarker) {
     state.posMarker = L.circleMarker(state.route[0], { radius: 5, color: '#fff', weight: 2, fillColor: AI, fillOpacity: 1 });
+  } else {
+    state.posMarker.setLatLng(state.route[0]); // 前回ルートの位置を引きずらない
   }
   state.posMarker.addTo(state.map);
 }
 
 function exitWalk() {
   stopAll();
+  applyNightFx(null);
   document.body.classList.remove('walk');
   $('controls').hidden = true;
   if (state.routeLine) {
@@ -450,7 +662,10 @@ function jumpTo(i) {
   state.idx = Math.max(0, Math.min(i, state.panos.length - 1));
   const p = state.panos[state.idx];
   state.panorama.setPano(p.id);
-  animateHeading(p.heading);
+  applyNightFx(p.level);
+  if (kyoroNow()) animateSweep(p.heading);
+  else if (gazeMode() === 'nagara') animateHeading(p.heading + nagaraOffset(state.idx));
+  else animateHeading(p.heading);
   performance.clearResourceTimings(); // 計測バッファが詰まるとタイル検知が止まるため毎歩クリア
   $('seek').value = state.idx;
   if (state.posMarker) state.posMarker.setLatLng(p);
@@ -459,6 +674,48 @@ function jumpTo(i) {
     state.prefetchPano.setPano(next.id);
     state.prefetchPano.setPov({ heading: next.heading, pitch: 0 });
   }
+}
+
+// キョロキョロは酔い対策で3地点に1回だけ。間の2歩は前を向いて歩く
+const KYORO_EVERY = 3;
+
+function gazeMode() { return $('gazeMode').value; }
+
+function kyoroNow() {
+  return gazeMode() === 'kyoro' && state.idx % KYORO_EVERY === 0;
+}
+
+// ながら見: 視線を進行方向±45°の範囲で、9歩周期でゆっくり左右に漂わせる
+function nagaraOffset(i) {
+  return 45 * Math.sin((i * 2 * Math.PI) / 9);
+}
+
+// キョロキョロ1回分の所要時間。速度設定(=眺める時間)に連動
+function kyoroDur() {
+  return 2000 + (+$('speed').value);
+}
+
+// 立ち止まって見回す: 進行方向へ向き直し → 左80° → 右80° → 正面
+function animateSweep(center) {
+  cancelAnimationFrame(state.raf);
+  const pano = state.panorama;
+  const from = pano.getPov().heading || 0;
+  const d0 = ((center - from + 540) % 360) - 180;
+  const t0 = performance.now();
+  const dur = kyoroDur();
+  const A = 60;
+  const ss = (k) => k * k * (3 - 2 * k); // smoothstep
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / dur);
+    let h;
+    if (k < 0.15) h = from + d0 * ss(k / 0.15);
+    else if (k < 0.45) h = center - A * ss((k - 0.15) / 0.3);
+    else if (k < 0.85) h = center - A + 2 * A * ss((k - 0.45) / 0.4);
+    else h = center + A * (1 - ss((k - 0.85) / 0.15));
+    pano.setPov({ heading: h, pitch: 0 });
+    if (k < 1) state.raf = requestAnimationFrame(step);
+  };
+  state.raf = requestAnimationFrame(step);
 }
 
 function animateHeading(target) {
@@ -487,7 +744,8 @@ function setPlaying(p) {
 // 速度設定は「読み込み完了後にその場を眺める時間」。タイル取得が続いている間は進まない
 function tick() {
   if (!state.playing) return;
-  const dwell = +$('speed').value;
+  // 見回し中の地点だけ、見回しが終わるまで進まない
+  const dwell = kyoroNow() ? kyoroDur() : +$('speed').value;
   const started = performance.now();
   const check = () => {
     if (!state.playing) return;
@@ -518,8 +776,11 @@ function stopAll() {
 
 function clearRoute() {
   if (state.routeLine) { state.routeLine.remove(); state.routeLine = null; }
+  if (state.nightLayer) { state.nightLayer.remove(); state.nightLayer = null; }
   if (state.clickMarker) { state.clickMarker.remove(); state.clickMarker = null; }
   state.route = [];
+  state.segs = [];
+  state.pois = [];
   state.panos = [];
   state.idx = 0;
   $('walkBtn').hidden = true;
@@ -533,7 +794,7 @@ function clearRoute() {
 function showKeyModal(show) {
   $('keyModal').hidden = !show;
   if (show) {
-    $('keyInput').value = localStorage.getItem('gururi_key') || '';
+    $('keyInput').value = getKey();
     $('keyInput').focus();
   }
 }

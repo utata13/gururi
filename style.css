@@ -21,6 +21,20 @@ html, body {
 body:not(.walk) #prefetch { visibility: hidden; }
 
 body.walk #pano { visibility: visible; z-index: 2; }
+
+/* 夜シミュレーション: 画面の明暗をなめらかに変える */
+#pano { transition: filter 1.2s ease; }
+#nightVeil {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: #0a1433;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 1.2s ease;
+}
+body.walk #nightVeil { visibility: visible; }
 body.walk #map {
   top: auto; left: auto;
   right: 12px; bottom: 12px;
